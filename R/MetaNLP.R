@@ -10,12 +10,12 @@
 "_PACKAGE"
 
 
-#' Create a data frame with word counts
+#' Create a data frame with document-term matrix
 #'
 #' A \code{MetaNLP} object is the base class of the package \pkg{MetaNLP}.
 #' It is initialized by passing the path to a CSV file and constructs
 #' a data frame whose column names are the words that occur in the titles
-#' and abstracts and whose cells contain the word counts for each
+#' and abstracts and whose cells contain the word frequencies for each
 #' paper.
 #'
 #' @rdname MetaNLP
@@ -42,13 +42,15 @@ setClass("MetaNLP", representation(data_frame = "data.frame"))
 #'
 #' @details
 #' An object of class \code{MetaNLP} contains a slot data_frame where
-#' the word count data frame is stored.
+#' the document-term matrix is stored as a data frame.
 #' The CSV file must have a column \code{ID} to identify each paper, a column
 #' \code{title} with the belonging titles of the papers and a column
-#' \code{abstract} which contains the abstracts. Furthermore, to store the
-#' decision for each paper, a column \code{decision} must exist, where the
-#' values are either "yes" and "no" or "include" and "exclude" or "maybe".
-#' The value "maybe" is handled as a "yes"/"include".
+#' \code{abstract} which contains the abstracts. If the CSV stores training data,
+#' a column \code{decision} should exist, indicating whether an abstract
+#' is included in the meta analysis. This column does not need to exist, because
+#' there is no decision for test data yet. Allowed values in this column are
+#' either "yes" and "no" or "include" and "exclude" or "maybe". The value "maybe"
+#' is handled as a "yes"/"include".
 #'
 #' @examples
 #' path <- system.file("extdata", "test_data.csv", package = "MetaNLP", mustWork = TRUE)
@@ -94,8 +96,14 @@ MetaNLP <- function(file,
     stop("The columns 'id', 'title' and 'abstract' must exist!")
   }
 
-  # only select rows without na values
-  data <-  subset(data, !(is.na(data$abstract) | is.na(data$title)))
+  # only select rows without na values or empty string
+  n_exclude <- nrow(subset(data, ((is.na(data$abstract) | data$abstract == "") |
+                                (is.na(data$title) | data$title == ""))))
+  data <-  subset(data, !((is.na(data$abstract) | data$abstract == "") |
+                            (is.na(data$title) | data$title == "")))
+  if(n_exclude > 0) {
+    warning(paste(n_exclude, "row(s) was/were removed due to missing values!"))
+  }
 
   suppressWarnings({data |>
     # select the columns "abstract" and "title"
@@ -105,8 +113,6 @@ MetaNLP <- function(file,
     (`[[`)(c("x")) |>
     # lower case
     tolower() |>
-    # lemmatization of the words
-    textstem::lemmatize_strings(dictionary = lexicon) |>
     tm::VectorSource() |>
     # create corpus object
     tm::Corpus() |>
@@ -114,6 +120,8 @@ MetaNLP <- function(file,
     tm::tm_map(tm::content_transformer(replaceSpecialChars), language = language) |>
     # strip white space
     tm::tm_map(tm::stripWhitespace) |>
+    # lemmatization of the words
+    tm::tm_map(textstem::lemmatize_strings, dictionary = lexicon) |>
     # only use word stems
     tm::tm_map(tm::stemDocument, language = language) |>
     # create matrix
@@ -125,7 +133,7 @@ MetaNLP <- function(file,
 
   # only choose word stems that appear at least a pre-specified number of times
   temp <- temp[, colSums(temp) >= bounds[1] & colSums(temp) <= bounds[2]]
-
+#
   # order by column name
   index_vec <- order(names(temp))
   temp |>
@@ -167,6 +175,7 @@ setMethod("show", signature("MetaNLP"),
 #' @param y not used
 #' @param max.words Maximum number of words in the word cloud
 #' @param colors Character vector with the colors in
+#' @param decision Stratify word cloud by decision. Default is no stratification.
 #' @param ... Additional parameters for \link[wordcloud]{wordcloud}
 #'
 #' @examples
@@ -179,10 +188,23 @@ setMethod("show", signature("MetaNLP"),
 setMethod("plot", signature("MetaNLP", y = "missing"),
           function(x,  y = NULL, max.words = 70,
                    colors = c("snow4", "darkgoldenrod1", "turquoise4", "tomato"),
+                   decision = c("total", "include", "exclude"),
                    ...) {
 
-            # prepare data
-            data <- x@data_frame
+            decision_ <- NULL
+            dec <- match.arg(decision)
+            # check whether decision column exists and filter data
+            if(dec != "total") {
+              if(is.null(x@data_frame$decision_)) {
+                warning("Column decision_ does not exist. Word cloud is created by using the whole document-term matrix.")
+                data <- x@data_frame
+              }
+              else {
+                x@data_frame |>
+                subset(decision_ == dec) -> data
+              }
+            }
+            else data <- x@data_frame
             data$id_ <- NULL
             data$decision_ <- NULL
 

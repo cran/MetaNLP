@@ -47,7 +47,7 @@ An object of class \code{MetaNLP}, where the columns were selected
 via elastic net.
 }
 \description{
-As the word count matrix quickly grows with an increasing number of abstracts,
+As the document-term matrix quickly grows with an increasing number of abstracts,
 it can easily reach several thousand columns. Thus, it can be important to
 extract the columns that carry most of the information in the decision making
 process. This function uses a generalized linear model combined with
@@ -57,7 +57,7 @@ sets some regression parameters to 0. Thus, the selected features are exactly
 the features with a non-zero entry.
 }
 \details{
-The computational aspects are executed by the \code{\link{glmnet}}
+The computational aspects are executed by the \code{glmnet}
 package. At first, a model is fitted via \link[glmnet]{glmnet}. The
 elastic net parameter \eqn{\alpha} can be specified by the user. The
 parameter \eqn{\lambda}, which determines the weight of the penalty, can
