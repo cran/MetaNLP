@@ -5,6 +5,12 @@ test_that("constructor works", {
   obj2 <- MetaNLP(path, bounds = c(1, Inf))
   obj3 <- MetaNLP(path, bounds = c(3,6), word_length = c(4,8))
 
+  # special characters are encoded correctly and do not lead to NA entries
+  expect_equal(
+    nrow(obj@data_frame),
+    4
+  )
+
   # rows containing na values lead to warning
   path_na <- test_path("data", "test_data_na.csv")
   expect_warning(
@@ -45,6 +51,18 @@ test_that("constructor works", {
     max(colSums(obj3@data_frame[-(1:2)]))      <= 6 &
     min(nchar(names(obj3@data_frame[-(1:2)]))) >= 4 &
     max(nchar(names(obj3@data_frame[-(1:2)]))) <= 8
+  )
+
+  # weighting is correct
+  obj4 <- MetaNLP(path, weighting = "binary")
+  obj5 <- MetaNLP(path, bounds = c(0, Inf), weighting = "tf-idf")
+
+  expect_equal(
+    max(obj4@data_frame[-c(1,2)]), 1
+  )
+
+  expect_true(
+    any(obj5@data_frame[-c(1,2)] %% 1 != 0)
   )
 
   # exemplary row to test correct results
@@ -133,7 +151,7 @@ test_that("plot method works", {
     plot(obj)
   }
   vdiffr::expect_doppelganger(
-    "wordcloud",
+    "barplot",
     plt()
   )
 
@@ -145,7 +163,7 @@ test_that("plot method works", {
     plot(obj, decision = "exclude")
   }
   vdiffr::expect_doppelganger(
-    "wordcloud_exclude",
+    "barplot_exclude",
     plt_exclude()
   )
 
@@ -157,7 +175,7 @@ test_that("plot method works", {
     plot(obj, decision = "include")
   }
   vdiffr::expect_doppelganger(
-    "wordcloud_include",
+    "barplot_include",
     plt_include()
   )
 
@@ -170,12 +188,49 @@ test_that("plot method works", {
     on.exit( {.Random.seed <<- old})
     plot(obj_nodec, decision = "include")
   }
+
   expect_warning(
     vdiffr::expect_doppelganger(
-    "wordcloud",
+    "barplot",
     plt_nodec()
   ))
 
+
+  # inclusion of stopwords
+  plt_sw_T <- function() {
+    old <- .Random.seed
+    set.seed(42)
+    on.exit( {.Random.seed <<- old})
+    plot(obj, stop_words = TRUE)
+  }
+  vdiffr::expect_doppelganger(
+    "barplot_sw_T",
+    plt_sw_T()
+  )
+
+  # exclusion of stopwords
+  plt_sw_F <- function() {
+    old <- .Random.seed
+    set.seed(42)
+    on.exit( {.Random.seed <<- old})
+    plot(obj, stop_words = FALSE)
+  }
+  vdiffr::expect_doppelganger(
+    "barplot_sw_F",
+    plt_sw_F()
+  )
+
+  # number of words
+  plt_n <- function() {
+    old <- .Random.seed
+    set.seed(42)
+    on.exit( {.Random.seed <<- old})
+    plot(obj, n = 5)
+  }
+  vdiffr::expect_doppelganger(
+    "barplot_n",
+    plt_sw_T()
+  )
 
 })
 

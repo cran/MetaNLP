@@ -17,6 +17,12 @@
 #' obj <- MetaNLP(path)
 #' summary(obj, n = 8)
 #'
+#' @note
+#' Note that "most frequent" here refers to the entries
+#' of the document-term matrix. This function simply computes the sum of each
+#' column and if a different weighting function was chosen, the displayed values
+#' are in terms of the weighted entries.
+#'
 #' @rdname summary
 #' @export
 setMethod("summary", signature("MetaNLP"),
@@ -58,20 +64,32 @@ setMethod("summary", signature("MetaNLP"),
             denom_ex <- sum(colSums(subset(wcm, decision_ == "exclude")[-c(1, 2)]))
             denom_in <- sum(colSums(subset(wcm, decision_ == "include")[-c(1, 2)]))
 
-            rel_total <- paste(round(total / denom_total * 100,
-                               digits = 2), "%")
-            rel_exclude <- paste(round(exclude /  denom_ex * 100,
+            # when choosing tf-idf, do not display relative frequency of words stems
+            if(denom_ex %% 1 == 0 && denom_in %% 1 == 0) {
+              rel_total <- paste(round(total / denom_total * 100,
                                        digits = 2), "%")
-            rel_include <- paste(round(include / denom_in * 100,
-                                       digits = 2), "%")
+              rel_exclude <- paste(round(exclude /  denom_ex * 100,
+                                         digits = 2), "%")
+              rel_include <- paste(round(include / denom_in * 100,
+                                         digits = 2), "%")
 
-            # return list with all information
-            list("Total" = noquote(rbind("Absolute" = total,
-                                         "Relative" = rel_total)),
-                 "Exclude" = noquote(rbind("Absolute" = exclude,
-                                           "Relative" = rel_exclude)),
-                 "Include" = noquote(rbind("Absolute" = include,
-                                           "Relative" = rel_include)))
+              # return list with all information
+              return(list("Total" = noquote(rbind("Absolute" = total,
+                                           "Relative" = rel_total)),
+                   "Exclude" = noquote(rbind("Absolute" = exclude,
+                                             "Relative" = rel_exclude)),
+                   "Include" = noquote(rbind("Absolute" = include,
+                                             "Relative" = rel_include))))
+            } else {
+
+              return(list("Total" = round(noquote(rbind("TF-IDF" = total)),
+                                          digits = 2),
+                          "Exclude" = round(noquote(rbind("TF-IDF" = exclude)),
+                                            digits = 2),
+                          "Include" = round(noquote(rbind("TF-IDF" = include)),
+                                            digits = 2)))
+
+            }
           })
 
 
@@ -208,4 +226,74 @@ setMethod("read_test_data", signature("MetaNLP"),
             test_data <- cbind("id_" = test_obj@data_frame$id_, test_data)
             test_obj@data_frame <- test_data
             test_obj
+          })
+
+
+
+#' Create word cloud from MetaNLP-object
+#'
+#' This method creates a word cloud from a MetaNLP object. The word size
+#' indicates the frequency of the words.
+#'
+#' @param object A MetaNLP object to plot
+#' @param max.words Maximum number of words in the word cloud
+#' @param colors Character vector with the colors in
+#' @param decision Stratify word cloud by decision. Default is no stratification.
+#' @param stop_words Boolean to decide whether stop words shall be included in
+#' @param ... Additional parameters for \link[wordcloud]{wordcloud}
+#'
+#' @examples
+#' path <- system.file("extdata", "test_data.csv", package = "MetaNLP", mustWork = TRUE)
+#' obj <- MetaNLP(path)
+#' plt <- plot(obj)
+#'
+#' @return nothing
+#' @rdname wordcloud
+#' @export
+
+setGeneric("wordcloud", function(object, ...) {
+  standardGeneric("wordcloud")
+})
+
+
+#' @rdname wordcloud
+#' @export
+setMethod("wordcloud", signature("MetaNLP"),
+          function(object, max.words = 70,
+                   colors = c("snow4", "darkgoldenrod1", "turquoise4", "tomato"),
+                   decision = c("total", "include", "exclude"),
+                   stop_words = FALSE,
+                   ...) {
+
+            decision_ <- NULL
+
+            # delete stop words
+            if(!stop_words) {
+              data <- delete_stop_words(object)@data_frame
+            } else {
+              data <- object@data_frame
+            }
+
+            dec <- match.arg(decision)
+            # check whether decision column exists and filter data
+            if(dec != "total") {
+              if(is.null(object@data_frame$decision_)) {
+                warning("Column decision_ does not exist. Word cloud is created by using the whole document-term matrix.")
+              }
+              else {
+                data <- data[data$decision_ == dec, ]
+              }
+            }
+
+            data$id_ <- NULL
+            data$decision_ <- NULL
+
+            # create word cloud
+            words <- names(data)
+            freqs <- colSums(data)
+
+            wordcloud::wordcloud(words, freqs, max.words = max.words,
+                                 random.order = FALSE,
+                                 color = colors, ...)
+
           })

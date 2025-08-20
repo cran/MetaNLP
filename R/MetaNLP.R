@@ -26,7 +26,8 @@ setClass("MetaNLP", representation(data_frame = "data.frame"))
 #' @param bounds An integer vector of length 2. The first value specifies
 #' the minimum number of appearances of a word to become a column of the word
 #' count matrix, the second value specifies the maximum number.
-#' Defaults to \code{c(2, Inf)}.
+#' Defaults to \code{c(2, Inf)}. Note that the bounds are with respect to
+#' the potentially weighted entries of the matrix.
 #' @param word_length An integer vector of length 2. The first value specifies
 #' the minimum number of characters of a word to become a column of the word
 #' count matrix, the second value specifies the maximum number.
@@ -35,6 +36,8 @@ setClass("MetaNLP", representation(data_frame = "data.frame"))
 #' languages are \code{english}, \code{french}, \code{german}, \code{russian} and
 #' \code{spanish}. For non-english languages make sure that the csv
 #' which is processed has the correct encoding.
+#' @param weighting A weighting function for the entries of the document-term matrix.
+#' Default is "frequency", other options are "binary" and "tf-idf".
 #' @param ... Additional arguments passed on to \code{read.csv2}, e.g. when
 #' "," should be used as a separator or when the encoding should be changed.
 #' See \link[utils]{read.table}.
@@ -70,6 +73,7 @@ MetaNLP <- function(file,
                     bounds      = c(2, Inf),
                     word_length = c(3, Inf),
                     language    = "english",
+                    weighting   = "frequency",
                     ...) {
   title <- NULL
   abstract <- NULL
@@ -84,6 +88,12 @@ MetaNLP <- function(file,
     lexicon <- lexicon::hash_lemmas
   }
 
+  # match weighting function
+  weighting = match.arg(weighting, c("frequency", "binary", "tf-idf"))
+  fn <- switch(weighting, "frequency" = tm::weightTf,
+               "binary"    = tm::weightBin,
+               "tf-idf"    = tm::weightTfIdf)
+
   # load file
   if(is.character(file)) data <- utils::read.csv2(file, header = TRUE, ...)
   else data <- as.data.frame(file)
@@ -95,6 +105,10 @@ MetaNLP <- function(file,
   if(any(c(is.null(data$id), is.null(data$title), is.null(data$abstract)))) {
     stop("The columns 'id', 'title' and 'abstract' must exist!")
   }
+
+  # ensure UTF-8 encoding and replace all non-convertable bytes by an empty space
+  data$title <- iconv(data$title, to = "UTF-8", sub = " ")
+  data$abstract <- iconv(data$abstract, to = "UTF-8", sub = " ")
 
   # only select rows without na values or empty string
   n_exclude <- nrow(subset(data, ((is.na(data$abstract) | data$abstract == "") |
@@ -125,23 +139,26 @@ MetaNLP <- function(file,
     # only use word stems
     tm::tm_map(tm::stemDocument, language = language) |>
     # create matrix
-    tm::TermDocumentMatrix(control = list(wordLengths = word_length)) |>
+    tm::DocumentTermMatrix(control = list(wordLengths = word_length,
+                                          weighting   = fn)) |>
     as.matrix() |>
-    t() |>
     as.data.frame() -> temp
   })
 
   # only choose word stems that appear at least a pre-specified number of times
   temp <- temp[, colSums(temp) >= bounds[1] & colSums(temp) <= bounds[2]]
-#
+
   # order by column name
   index_vec <- order(names(temp))
   temp |>
     subset(select = index_vec) -> temp
 
   if(!is.null(data$decision)) {
-    # allow for "maybe" as decision
-    decision <- ifelse(data$decision %in% c("include", "maybe", "yes"),
+    # use grepl to ensure that words like "included" or "Inclusion" are treated
+    #correctly
+    decision <- ifelse(grepl("incl", data$decision, ignore.case = TRUE) |
+                           grepl("yes", data$decision, ignore.case = TRUE) |
+                           grepl("maybe", data$decision, ignore.case = TRUE),
                        "include", "exclude")
 
     # add columns containing the ids of the papers and the belonging decisions
@@ -166,54 +183,84 @@ setMethod("show", signature("MetaNLP"),
           })
 
 
-#' Create word cloud from MetaNLP-object
+#' Create bar plot from MetaNLP-object
 #'
-#' This method creates a word cloud from a MetaNLP object. The word size
-#' indicates the frequency of the words.
+#' This method creates a bar plot from a MetaNLP object, displaying the most
+#' frequent word stems.
 #'
 #' @param x A MetaNLP object to plot
 #' @param y not used
-#' @param max.words Maximum number of words in the word cloud
-#' @param colors Character vector with the colors in
-#' @param decision Stratify word cloud by decision. Default is no stratification.
-#' @param ... Additional parameters for \link[wordcloud]{wordcloud}
+#' @param n Number of bars
+#' @param decision Stratify bar plot by decision. Default is no stratification.
+#' @param stop_words Boolean to decide whether stop words shall be included in
+#' the summary. \code{stop_words = TRUE} means, that stop words are included.
+#' @param ... Additional parameters for \code{delete_stop_words} (e.g. language
+#' of the stop words).
 #'
 #' @examples
 #' path <- system.file("extdata", "test_data.csv", package = "MetaNLP", mustWork = TRUE)
 #' obj <- MetaNLP(path)
 #' plt <- plot(obj)
 #'
+#' @note
+#' Note that "most frequent" here refers to the entries
+#' of the document-term matrix. If "binary" or "tf-idf" weighting was chosen,
+#' the displayed values are in terms of the weighted entries.
+#'
 #' @return nothing
+#'
+#' @importFrom graphics barplot
+#'
 #' @export
 setMethod("plot", signature("MetaNLP", y = "missing"),
-          function(x,  y = NULL, max.words = 70,
-                   colors = c("snow4", "darkgoldenrod1", "turquoise4", "tomato"),
+          function(x,  y = NULL, n = 10,
                    decision = c("total", "include", "exclude"),
+                   stop_words = FALSE,
                    ...) {
 
             decision_ <- NULL
+
+            # delete stop words
+            if(!stop_words) {
+              data <- delete_stop_words(x, ...)@data_frame
+            } else {
+              data <- x@data_frame
+            }
+
             dec <- match.arg(decision)
             # check whether decision column exists and filter data
             if(dec != "total") {
-              if(is.null(x@data_frame$decision_)) {
-                warning("Column decision_ does not exist. Word cloud is created by using the whole document-term matrix.")
-                data <- x@data_frame
+              if(is.null(data$decision_)) {
+                warning("Column decision_ does not exist. Bar plot is created
+                          by using the whole document-term matrix.")
               }
               else {
-                x@data_frame |>
-                subset(decision_ == dec) -> data
+                data <- data[data$decision_ == dec, ]
               }
             }
-            else data <- x@data_frame
+
             data$id_ <- NULL
             data$decision_ <- NULL
 
-            # create word cloud
-            words <- names(data)
-            freqs <- colSums(data)
+            # get n most frequent words
+            data |>
+              (`[`)(-c(1, 2)) |>
+              colSums() |>
+              sort(decreasing = TRUE) |>
+              (`[`)(1:n) |>
+              rev() -> total
 
-            wordcloud::wordcloud(words, freqs, max.words = max.words,
-                                random.order = FALSE,
-                                color = colors, ...)
-
+            # create bar plot
+            graphics::barplot(total,
+                              col = "#4A90E2",
+                              horiz = TRUE,
+                              border = NA,
+                              xlim = c(0, max(total) * 1.1),
+                              xlab = "Number of appearances",
+                              main = "Most frequent words",
+                              las = 2,
+                              cex.names = min(0.7, 8 / length(total)),
+                              cex.axis = 0.8)
           })
+
+
